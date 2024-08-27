@@ -1,0 +1,93 @@
+service: videoProcessingApp
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  region: us-east-1
+  environment:
+    BUCKET_NAME: your-s3-bucket-name
+    DB_HOST: your-rds-endpoint
+    DB_USER: your-db-username
+    DB_PASSWORD: your-db-password
+    DB_NAME: your-db-name
+
+functions:
+  uploadFile:
+    handler: handler.uploadFile
+    events:
+      - http:
+          path: upload
+          method: post
+          cors: true
+          authorizer: aws_cognito_authorizer
+
+  processFile:
+    handler: handler.processFile
+    events:
+      - s3:
+          bucket: ${self:provider.environment.BUCKET_NAME}
+          event: s3:ObjectCreated:*
+
+resources:
+  Resources:
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:provider.environment.BUCKET_NAME}
+        AccessControl: Private
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: VideoProcessingUserPool
+        LambdaConfig:
+          PreSignUp: !GetAtt PreSignUpFunction.Arn
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        ClientName: VideoProcessingClient
+        UserPoolId: !Ref CognitoUserPool
+        GenerateSecret: false
+
+    PreSignUpFunction:
+      Type: AWS::Serverless::Function
+      Properties:
+        Handler: handler.preSignUp
+        Runtime: nodejs14.x
+        Policies:
+          - AWSLambdaBasicExecutionRole
+          - Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito:AdminCreateUser
+                Resource: !Ref CognitoUserPool
+
+    RDSInstance:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        DBInstanceIdentifier: videoProcessingDB
+        AllocatedStorage: 20
+        DBInstanceClass: db.t2.micro
+        Engine: mysql
+        MasterUsername: ${self:provider.environment.DB_USER}
+        MasterUserPassword: ${self:provider.environment.DB_PASSWORD}
+        DBName: ${self:provider.environment.DB_NAME}
+        VPCSecurityGroups:
+          - !GetAtt RDSSecurityGroup.GroupId
+
+    RDSSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Enable access to RDS
+        VpcId: your-vpc-id
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: 0.0.0.0/0  # Ajuste conforme necessário
+
+plugins:
+  - serverless-offline
+
